@@ -36,6 +36,7 @@ const char* DeviceVersion = "Mpp32Relays 1.0.0";
     
 static bool eth_connected = false;
 WiFiServer server; // Declare server objects
+WiFiServer webserver(80); // Declare web server 
 WiFiUDP Udp;
 
 String udn="",location,group;
@@ -47,7 +48,7 @@ int Subscriber_num=0;
 unsigned int localPort = 8898;      // local port to listen on
 unsigned int BroadcastPort = 1900;
 boolean device_state=false;
-String Srelays="12,14,13,15";
+String Srelays="";
 String JsonRelays[10];
 unsigned int PinRelays[10];
 unsigned long lastnotify;
@@ -326,6 +327,7 @@ void setup()
  location+="http://"+(ETH.localIP().toString())+ ":" + "8898";
  group=getUID();
 
+if(Srelays=="") Srelays="12";  // make default relay pin assigment
 class MppTokens relays(Srelays, ',');
 
 for (int i = 0;; i++) {
@@ -340,6 +342,8 @@ for (int i = 0;; i++) {
   server.begin(localPort); // Server starts listening on port number 8898
   Serial.printf("Server started to listen at port %d\n",localPort);
 
+  webserver.begin(80); 
+  Serial.println("Web Server started on port 80.");
 }
 
 void loop()
@@ -355,6 +359,70 @@ unsigned long now = millis();
   
 
      WiFiClient client = server.available(); 
+      WiFiClient webclient = webserver.available(); 
+      if(webclient) 
+      {
+         Serial.println("new web client");
+
+    boolean currentLineIsBlank = true;
+    while (webclient.connected()) {
+      if (webclient.available()) {
+        char c = webclient.read();
+        if (c != '\n' && c != '\r') InputString += c;
+             if (c == '\n' && currentLineIsBlank) {
+            webclient.println("HTTP/1.1 200 OK");
+            webclient.println("Content-Type: text/html");
+            webclient.println("Connection: close");  // the connection will be closed after completion of the response
+            webclient.println();
+            webclient.println("<!DOCTYPE HTML>");
+             webclient.println("<html>");
+              webclient.println("<body><H1>Mpp Ethernet ESP32 multirelay</H1>");
+                webclient.println("<form method=GET style='display:inline' > Enter relays pin number comma separated: <input type=text name=Rstring SIZE=20 ><input type=submit value=Submit_changes></form>");
+                    webclient.println("<br /> <br />After you submited the relays pin , please make search for new MppDevice on AM Server again! <br /><br />");
+                        webclient.println("&nbsp;<input type=button value='Restart' style='width:150px' onmousedown=location.href='/?RestartESP;'>"); 
+                          webclient.println("</html>");
+                            
+          break;
+          }
+          if (c == '\n') currentLineIsBlank = true;
+              else if (c != '\r') currentLineIsBlank = false;
+         }
+    }  
+    delay(3);
+    // close the connection:
+    webclient.stop();
+    Serial.println("client disconnected");
+  //  Serial.println("Line HTTP:"+InputString );
+    Srelays="";
+    if(!InputString.startsWith("GET /favicon.ico HTTP/1.1") && InputString.indexOf("Rstring=")!=-1) // filtering   /favicon.ico query
+    {
+      String rel3=InputString.substring(InputString.indexOf("Rstring=")+8,InputString.lastIndexOf("HTTP/1.1")-1);
+      for (int i = 0;i<rel3.length(); i++) {
+      if(rel3.charAt(i)=='%' && rel3.charAt(i+1)=='2' && rel3.charAt(i+2)=='C'){ Srelays+=","; i=i+2;}
+        else Srelays+=rel3.charAt(i);
+        Serial.printf("Final String:%s\n",Srelays.c_str());
+      }
+        InputString=""; 
+        Serial.println("Submited!"); 
+        class MppTokens relays(Srelays, ',');
+
+for (int i = 0;; i++) {
+    String r = relays.next();
+    if (r.length() == 0 || i==9)  break;
+    JsonRelays[i]=makeJsonString(i); 
+    PinRelays[i]=r.toInt();
+ }
+        }
+
+    if(!InputString.startsWith("GET /favicon.ico HTTP/1.1") && InputString.indexOf("RestartESP")!=-1) {   // filtering   /favicon.ico query
+                                                  InputString=""; 
+                                                  Serial.println("ESP rebooted"); 
+                                                  delay(250);
+                                                  esp_restart();
+                                                  }
+        
+  }
+ 
  
     if (client) // If current customer is available
     {
