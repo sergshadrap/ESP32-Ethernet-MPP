@@ -7,3 +7,4 @@ For setting GPIOs you need please visit web server of the device and enter GPIO 
 Accordingly to that list they will be numbered and named in programm, by such way - MppSwitch_device mac address_relay number.
 After all you can rename it in AM server console - as you wish. Note - there is no space allowed in the name.
 The new version stores the current config in EEPROM memory, such as relays pins, state of each relay, names. Even if the power was down - it will be restored for the last succsesfull state.
+The 1.2.1 version add UDP discovery , UDP notifications of subscribers.
