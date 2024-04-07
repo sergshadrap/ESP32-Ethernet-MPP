@@ -32,7 +32,8 @@
 // #define NRST            12
 
 #define checkin 10000
-const char* DeviceVersion = "Mpp32Relays 1.1.1"; // Keep all states and tunes in EEPROM , and restore after power shutdown, support renaming
+const char* DeviceVersion = "Mpp32Relays 1.2.1"; // Keep all states and tunes in EEPROM , and restore after power shutdown, support renaming
+                                                 // UDP discovery , UDP notifications
 
     
 static bool eth_connected = false;
@@ -47,7 +48,7 @@ String Subscriber[4];
 int Subscriber_num=0;
 
 unsigned int localPort = 8898;      // local port to listen on
-unsigned int BroadcastPort = 1900;
+// unsigned int BroadcastPort = 1900;
 boolean device_state=false;
 String Srelays="";
 String JsonRelays[10];
@@ -204,85 +205,64 @@ void UpdateCurrentProperties(void) {   // if properties already exist - refresh 
     }
    if(Prop.length()>10) writeProperties(Prop); // save current Json & pin in EEPROM 
 }
-/*
-void addSubscriber(const String& ip) {
-  Subscription* subscription = NULL;
-  for (int i = 0; i < count; i++) {
-    if (strcmp(subscriptions[i].ip, ip.c_str()) == 0)
-      subscription = &subscriptions[i];
-  }
-  if (subscription == NULL) {
-    ++count;
-    subscriptions = (Subscription*) realloc(subscriptions,
-        count * sizeof(struct Subscription));
-    subscription = &subscriptions[count - 1];
-    strcpy(subscription->ip, ip.c_str());
-    Serial.printf("added subscriber %s\n", subscription->ip);
-  }
-  subscription->expires = millis() + 1000 * 10 * 60; // 10m
-  Serial.printf("%s subscribed until %lu\n", subscription->ip,
-      subscription->expires);
-}*/
 
 
-
-boolean notifySubscribers(String IpClient,String JsonQuery) {
-    unsigned long now = millis();
-        if (now > lastnotify+600000) {  // notifying every 10 min
-        Serial.printf("Notifying: %s  ...\n",IpClient.c_str());
-        Udp.beginPacket(IpClient.c_str(), localPort);
-//          int result = Udp.write((const uint8_t *)JsonQuery.c_str(),JsonQuery.length());
-            Udp.write((const uint8_t *)JsonQuery.c_str(),JsonQuery.length());
-          Udp.endPacket();
-          Serial.println("Notifications sent.");
-          lastnotify=millis();
+bool addSubscriber(String ip) {
+  unsigned count =3; // restricted Subscriber size
+  for (int i = 0; i <= count; i++) {
+    if ((strcmp(Subscriber[i].c_str(), ip.c_str()) == 0) || Subscriber[i]=="")  {
+      if(Subscriber[i]) { 
+        Subscriber[i]= ip.c_str();  
+         Serial.printf("%s subscribed as Subscriber[%d] \n", Subscriber[i].c_str(),i);
+          return true;
+        }
+    } else  {
+      if(i==3)  {
+        count=0;
+         Subscriber[i]= ip.c_str();  
+         Serial.printf("%s subscribed as Subscriber[%d] \n", Subscriber[i].c_str(),i);
           return true;
       }
+    }
+  }
   return false;
+}
+
+
+void notifySubscribers(void) {
+    unsigned long now = millis();
+        if (now > lastnotify+600000) {  // notifying every 10 min
+          
+          for (int i = 0; i <= 3; i++) {  //3 -is max subscribers
+             if(Subscriber[i]==0) break;
+             for (int j = 0;; j++) {
+              String message = "";
+              if (JsonRelays[j].length() == 0)  break;
+                message+=JsonRelays[j].c_str();
+                Serial.printf("Notifying: %s  ... with %s\n",Subscriber[i].c_str(),message.c_str());
+                  Udp.beginPacket(Subscriber[i].c_str(), localPort);
+      //          int result = Udp.write((const uint8_t *)JsonQuery.c_str(),JsonQuery.length());
+                  Udp.write((const uint8_t *)message.c_str(),message.length());
+                  Udp.endPacket();
+          Serial.println("Notifications sent.");
+             }
+         }
+       lastnotify=millis();
+     }      
+  return;
 }
 
 void SendBroadcastUDP()  {
-for (int i = 0;; i++) {
-  if (JsonRelays[i].length() == 0) break;  
+
+  if (makeJsonArray() == 0) return;  
  
-  Udp.beginPacket(BroadcastIP.c_str(), BroadcastPort);
+  Udp.beginPacket(BroadcastIP.c_str(), localPort);
 //       int result = Udp.write((const uint8_t *)makeJsonString(i).c_str(),makeJsonString(i).length());
-        Udp.write((const uint8_t *)makeJsonString(i).c_str(),makeJsonString(i).length());
+        Udp.write((const uint8_t *)makeJsonArray().c_str(),makeJsonArray().length());
         Udp.endPacket();
-    }
+        return;
 }
 
-
-boolean CheckUdpDiscovery() {
-  
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
-      int packetSize = Udp.parsePacket();
-  if(packetSize)
-  {
-    Serial.print("Received packet of size ");
-    Serial.println(packetSize);
-    Serial.print("From ");
-    IPAddress remote = Udp.remoteIP();
-    for (int i =0; i < 4; i++)
-    {
-      Serial.print(remote[i], DEC);
-      if (i < 3)
-      {
-        Serial.print(".");
-      }
-    }
-    Serial.print(", port ");
-    Serial.println(Udp.remotePort());
-
-    // read the packet into packetBuffer
-//    int len = Udp.read(packetBuffer,UDP_TX_PACKET_MAX_SIZE);
-      Udp.read(packetBuffer,UDP_TX_PACKET_MAX_SIZE);
-    Serial.println("Contents:");
-    Serial.println(packetBuffer);
-    if (String(packetBuffer).startsWith("discover")) return true;
-}
-  return false;
-} 
 
 
 void WiFiEvent(WiFiEvent_t event)
@@ -304,8 +284,7 @@ void WiFiEvent(WiFiEvent_t event)
         Serial.print(ETH.macAddress());
         Serial.print(", IPv4: ");
         Serial.print(ETH.localIP());
-        
-  //       SendBroadcastUDP();
+        SendBroadcastUDP(); // Broadcast UDP
         if (ETH.fullDuplex())
         {
             Serial.print(", FULL_DUPLEX");
@@ -338,7 +317,6 @@ void UpdateStatus(WiFiClient& client)   {
 //        int result = Udp.write((const uint8_t *)JSONR.c_str(),JSONR.length());
           Udp.write((const uint8_t *)JSONR.c_str(),JSONR.length());
         Udp.endPacket();
-        
   }
 }
 
@@ -384,18 +362,19 @@ void sendDiscoveryResponse(IPAddress remoteIp, int remotePort) {
       remoteIp.toString().c_str(), remotePort, result);
 }
 
-int handleIncomingUdp(WiFiUDP &Udp) {
+bool handleIncomingUdp(WiFiUDP &Udp) {
   char incoming[16]; // only "discover" is accepted
 // receive incoming UDP packets
- Serial.printf("Received from %s, port %d\n", Udp.remoteIP().toString().c_str(), Udp.remotePort());
+// Serial.printf("Received from %s, port %d\n", Udp.remoteIP().toString().c_str(), Udp.remotePort());
   int len = Udp.read(incoming, sizeof(incoming) - 1);
   if (len > 0) {
     incoming[len] = 0;
    Serial.printf("UDP packet contents: %s\n", incoming);
     if (String(incoming).startsWith("discover"))
       sendDiscoveryResponse(Udp.remoteIP(), Udp.remotePort());
+    else return false;  
   }
-  return OK;
+  return true;
 }
 
 
@@ -499,8 +478,8 @@ unsigned long now = millis();
 
   if (eth_connected)
   {
- CheckUdpDiscovery();
-  
+ // CheckUdpDiscovery();
+  handleIncomingUdp(Udp);
 
      WiFiClient client = server.available(); 
       WiFiClient webclient = webserver.available(); 
@@ -573,13 +552,7 @@ for (int i = 0;; i++) {
     {
         Serial.println("[Client connected]");
         Serial.printf("Remore client IP:%s\n",client.remoteIP().toString().c_str());
-       Subscriber[Subscriber_num]=client.remoteIP().toString().c_str();
-          Subscriber_num++ ;
-      if(Subscriber_num>=3) Subscriber_num=0;
-             Serial.println("New Subscriber IP stored: "+Subscriber[Subscriber_num]);
-              Serial.printf("Num of Subscriber: %d\n",Subscriber_num);
-        
-        if(Udp.parsePacket())  handleIncomingUdp(Udp);
+              addSubscriber(client.remoteIP().toString().c_str());
         
         while (client.connected()) // If the client is connected
         {
@@ -605,7 +578,7 @@ for (int i = 0;; i++) {
                if (c == '\n' && InputString.startsWith("GET /state") ) { // Reply to first device discovery
                Serial.println("Answering GET Response:"+InputString ); 
              unsigned int relnum= ParseGet(InputString)-'0';
-//                bool staterel=CheckRelayState(relnum);
+
 if(relnum>=0 && relnum<=9) {
       CheckRelayState(relnum);
        client.println("HTTP/1.1 200 OK");
@@ -639,9 +612,6 @@ if(relnum>=0 && relnum<=9) {
        String network = "[]";
        client.println(network);
        client.println("\r\n\r\n");
-  /*      Udp.beginPacket(client.remoteIP().toString().c_str(), localPort);
-        int result = Udp.write((const uint8_t *)network.c_str(),network.length());
-        Udp.endPacket();*/
           break;
            }
           if (c == '\n' && InputString.startsWith("PUT /state") ) {
@@ -703,6 +673,7 @@ if(relnum>=0 && relnum<=9) {
  Serial.println("[Client disconnected]" );
  Serial.println("Line HTTP:"+InputString );
     }
+    if(Subscriber[0]!=0) notifySubscribers(); // if at least  one subscriber exist
   } else {
   next = now + checkin;
   if (now > next)              {
